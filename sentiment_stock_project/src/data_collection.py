@@ -1,14 +1,3 @@
-"""
-data_collection.py
-==================
-Collects data from three sources:
-  1. Reddit (semi-structured JSON)  → stored in MongoDB
-  2. Yahoo Finance (structured CSV)  → stored in PostgreSQL
-  3. Alpha Vantage news (structured) → stored in PostgreSQL
-
-Run this file first: python src/data_collection.py
-"""
-
 import os
 import json
 import time
@@ -33,26 +22,19 @@ TICKERS        = ["TSLA", "AAPL", "GME", "NVDA", "AMZN"]
 SUBREDDITS     = ["wallstreetbets", "stocks", "investing"]
 START_DATE     = "2023-01-01"
 END_DATE       = "2024-12-31"
-POSTS_PER_SUB  = 500          # how many reddit posts to fetch per subreddit per ticker
+POSTS_PER_SUB  = 500          
 
 # ─────────────────────────────────────────────
 # DATABASE CONNECTIONS
 # ─────────────────────────────────────────────
 
 def get_mongo_client():
-    """Returns a connected MongoDB client.
-    MongoDB is used because Reddit JSON documents have variable schemas —
-    some posts have awards, flairs, media etc. that others do not.
-    MongoDB stores each post as-is without needing a fixed table schema."""
     uri = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
     client = pymongo.MongoClient(uri)
     log.info("Connected to MongoDB at %s", uri)
     return client
 
 def get_pg_engine():
-    """Returns a SQLAlchemy engine for PostgreSQL.
-    PostgreSQL is used for structured, tabular data (stock prices, news)
-    because it supports SQL joins, indexing, and time-series queries efficiently."""
     host = os.getenv("PG_HOST", "localhost")
     port = os.getenv("PG_PORT", "5432")
     user = os.getenv("PG_USER", "postgres")
@@ -68,19 +50,9 @@ def get_pg_engine():
 # ─────────────────────────────────────────────
 
 def fetch_reddit_posts_via_api(subreddit: str, ticker: str, limit: int = 100) -> list[dict]:
-    """
-    Fetches Reddit posts mentioning a ticker from a given subreddit.
-    Uses Reddit's public JSON API (no authentication required for read-only).
-    
-    Each returned post is a raw JSON dictionary — semi-structured because
-    the fields present vary post by post. We store these in MongoDB as-is,
-    preserving the original structure.
-
-    Returns a list of post dictionaries.
-    """
     posts = []
     headers = {"User-Agent": os.getenv("REDDIT_USER_AGENT", "SentimentBot/1.0")}
-    after   = None   # Reddit's pagination cursor
+    after   = None   
 
     while len(posts) < limit:
         batch = min(100, limit - len(posts))
@@ -101,7 +73,6 @@ def fetch_reddit_posts_via_api(subreddit: str, ticker: str, limit: int = 100) ->
 
         for child in children:
             post = child.get("data", {})
-            # Add metadata for our own tracking
             post["_fetched_ticker"]    = ticker
             post["_fetched_subreddit"] = subreddit
             post["_fetched_at"]        = datetime.utcnow().isoformat()
@@ -110,33 +81,18 @@ def fetch_reddit_posts_via_api(subreddit: str, ticker: str, limit: int = 100) ->
         after = data.get("data", {}).get("after")
         if not after:
             break
-        time.sleep(1.2)   # be polite to Reddit's rate limit
+        time.sleep(1.2) 
 
     log.info("Fetched %d posts from r/%s for %s", len(posts), subreddit, ticker)
     return posts
 
 
 def store_reddit_in_mongo(posts: list[dict], db_name: str = None):
-    """
-    Stores raw Reddit post JSON documents into MongoDB.
-
-    WHY MongoDB here?
-    - Each Reddit post is a JSON object with different fields present depending
-      on whether the post has media, awards, flair, etc.
-    - MongoDB is a document database: it stores JSON natively and does NOT require
-      every document to have the same fields. This makes it perfect for semi-structured data.
-    - A relational database like PostgreSQL would require us to define all columns upfront
-      and would waste space with NULL columns for fields that only some posts have.
-
-    Collection: 'reddit_posts'
-    Index: created on (ticker, created_utc) for fast time-range queries.
-    """
     client  = get_mongo_client()
     db_name = db_name or os.getenv("MONGO_DB", "sentiment_stock_db")
     db      = client[db_name]
     col     = db["reddit_posts"]
 
-    # Create index to avoid duplicate inserts and speed up queries
     col.create_index([("id", pymongo.ASCENDING)], unique=True)
     col.create_index([("_fetched_ticker", pymongo.ASCENDING),
                       ("created_utc", pymongo.ASCENDING)])
@@ -154,13 +110,12 @@ def store_reddit_in_mongo(posts: list[dict], db_name: str = None):
 
 
 def collect_all_reddit(tickers=TICKERS, subreddits=SUBREDDITS):
-    """Loops over all tickers and subreddits, fetches posts, stores in Mongo."""
     for ticker in tickers:
         for sub in subreddits:
             posts = fetch_reddit_posts_via_api(sub, ticker, limit=POSTS_PER_SUB)
             if posts:
                 store_reddit_in_mongo(posts)
-            time.sleep(2)   # pause between subreddit requests
+            time.sleep(2)   
 
 
 # ─────────────────────────────────────────────
@@ -170,24 +125,12 @@ def collect_all_reddit(tickers=TICKERS, subreddits=SUBREDDITS):
 def fetch_stock_prices(tickers: list[str] = TICKERS,
                        start: str = START_DATE,
                        end: str   = END_DATE) -> pd.DataFrame:
-    """
-    Downloads daily OHLCV stock data from Yahoo Finance using the yfinance library.
-    
-    OHLCV = Open, High, Low, Close, Volume — the standard daily price record.
-    We also compute:
-      - daily_return: percentage price change day-over-day
-      - price_direction: +1 if price went up, -1 if down (used for ML classification)
-    
-    Returns a tidy DataFrame with columns: date, ticker, open, high, low, close, volume,
-    daily_return, price_direction.
-    """
     log.info("Downloading stock prices for %s from %s to %s", tickers, start, end)
     raw = yf.download(tickers, start=start, end=end, auto_adjust=True, progress=False)
 
     frames = []
     for ticker in tickers:
         try:
-            # yfinance returns multi-level columns when multiple tickers are given
             if len(tickers) > 1:
                 df = raw.xs(ticker, axis=1, level=1).copy()
             else:
@@ -208,16 +151,6 @@ def fetch_stock_prices(tickers: list[str] = TICKERS,
 
 
 def store_stock_prices_in_pg(df: pd.DataFrame, engine):
-    """
-    Stores stock price data in PostgreSQL table 'stock_prices'.
-
-    WHY PostgreSQL here?
-    - Stock prices are perfectly structured: every row has exactly the same columns.
-    - PostgreSQL supports time-series queries like windowed rolling averages,
-      JOIN with sentiment scores on date+ticker, and efficient indexing on dates.
-    - The relational model also lets us JOIN stock_prices with news_sentiment on
-      (date, ticker) — something much harder to do in MongoDB.
-    """
     df_store = df[["date", "ticker", "open", "high", "low", "close",
                    "volume", "daily_return", "price_direction", "rolling_vol_5d"]].copy()
     df_store["date"] = pd.to_datetime(df_store["date"])
@@ -237,14 +170,6 @@ def store_stock_prices_in_pg(df: pd.DataFrame, engine):
 # ─────────────────────────────────────────────
 
 def fetch_news_sentiment_alpha_vantage(ticker: str, api_key: str) -> list[dict]:
-    """
-    Fetches financial news sentiment from Alpha Vantage's NEWS_SENTIMENT endpoint.
-    Alpha Vantage returns JSON with article titles, sources, publication times,
-    and pre-computed sentiment scores per ticker mention.
-
-    We flatten this into a structured table (one row per article per ticker mention)
-    because the sentiment scores and metadata are consistent across all articles.
-    """
     url = (f"https://www.alphavantage.co/query"
            f"?function=NEWS_SENTIMENT&tickers={ticker}"
            f"&time_from=20230101T0000&limit=1000&apikey={api_key}")
@@ -264,7 +189,6 @@ def fetch_news_sentiment_alpha_vantage(ticker: str, api_key: str) -> list[dict]:
         except Exception:
             pub_dt = None
 
-        # Each article can mention multiple tickers — extract only our ticker's sentiment
         for ts in article.get("ticker_sentiment", []):
             if ts.get("ticker") == ticker:
                 records.append({
@@ -284,23 +208,12 @@ def fetch_news_sentiment_alpha_vantage(ticker: str, api_key: str) -> list[dict]:
 
 def generate_synthetic_news_sentiment(tickers=TICKERS,
                                       start=START_DATE, end=END_DATE) -> pd.DataFrame:
-    """
-    FALLBACK: Generates realistic synthetic news sentiment data for demonstration
-    when an Alpha Vantage API key is not available.
-
-    This is clearly documented as synthetic. In a real deployment, replace this
-    with fetch_news_sentiment_alpha_vantage().
-
-    The synthetic data uses a random walk with mean-reversion to simulate realistic
-    sentiment drift, and seeds the random number generator per ticker for reproducibility.
-    """
     log.info("Generating synthetic news sentiment (no API key found)")
-    dates = pd.date_range(start, end, freq="B")   # Business days only
+    dates = pd.date_range(start, end, freq="B")   
     frames = []
     for ticker in tickers:
         rng  = np.random.default_rng(seed=abs(hash(ticker)) % (2**31))
         n    = len(dates)
-        # Mean-reverting random walk (Ornstein-Uhlenbeck process)
         score = np.zeros(n)
         score[0] = rng.normal(0, 0.1)
         theta, mu, sigma = 0.1, 0.0, 0.15
@@ -323,7 +236,6 @@ def generate_synthetic_news_sentiment(tickers=TICKERS,
 
 
 def store_news_in_pg(df: pd.DataFrame, engine):
-    """Stores news sentiment data in PostgreSQL table 'news_sentiment'."""
     df["date"] = pd.to_datetime(df["date"])
     df.to_sql("news_sentiment", engine, if_exists="replace",
               index=False, method="multi", chunksize=500)
@@ -341,12 +253,6 @@ def store_news_in_pg(df: pd.DataFrame, engine):
 # ─────────────────────────────────────────────
 
 def run_collection():
-    """
-    Orchestrates the full data collection pipeline.
-    Step 1: Reddit posts → MongoDB
-    Step 2: Stock prices → PostgreSQL
-    Step 3: News sentiment → PostgreSQL
-    """
     log.info("=" * 60)
     log.info("STEP 1/3: Collecting Reddit posts → MongoDB")
     log.info("=" * 60)
@@ -368,7 +274,7 @@ def run_collection():
         for ticker in TICKERS:
             records = fetch_news_sentiment_alpha_vantage(ticker, av_key)
             all_news.extend(records)
-            time.sleep(12)   # Alpha Vantage free tier: 5 calls/min
+            time.sleep(12)   
         if all_news:
             news_df = pd.DataFrame(all_news)
             store_news_in_pg(news_df, engine)

@@ -1,14 +1,10 @@
 """
-analysis.py
-===========
-Statistical analysis and machine learning on the master dataset:
-  - Pearson & Spearman correlation (sentiment vs price)
-  - Lead-lag analysis (does sentiment predict tomorrow's price?)
-  - Granger causality test (formal statistical causality)
-  - Random Forest classification (predict price direction from sentiment)
-  - Sector/ticker comparison
-
-Run: python src/analysis.py
+The following code involve statistical analysis and machine learning on the
+master dataset. The major anlaysis involve Pearson & Spearman correlation in which
+Sentiment vs Price is analysed. Using Lead-lag analysis, it predicts tomorrow's price
+based based on sentiment. The Granger causality test tests for formal statistical
+causality while Random Forest classifier is involved in the diurection of price prediction
+based on sentiment followed by a ticker comparison.
 """
 
 import logging
@@ -337,7 +333,6 @@ def compute_sentiment_regimes(df: pd.DataFrame) -> pd.DataFrame:
 # ─────────────────────────────────────────────
 
 def run_full_analysis(df: pd.DataFrame) -> dict:
-    """Runs all analyses and returns a dictionary of result DataFrames."""
     log.info("Running full statistical analysis suite...")
     return {
         "correlations":    compute_correlations(df),

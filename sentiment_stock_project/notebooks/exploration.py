@@ -1,13 +1,3 @@
-"""
-notebooks/exploration.py
-========================
-Interactive data exploration script.
-Run cells in Jupyter or as a plain Python script.
-
-Usage:  python notebooks/exploration.py
-Or:     jupyter notebook (then open this file)
-"""
-
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

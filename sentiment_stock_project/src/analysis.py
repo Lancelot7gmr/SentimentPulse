@@ -1,16 +1,3 @@
-"""
-analysis.py
-===========
-Statistical analysis and machine learning on the master dataset:
-  - Pearson & Spearman correlation (sentiment vs price)
-  - Lead-lag analysis (does sentiment predict tomorrow's price?)
-  - Granger causality test (formal statistical causality)
-  - Random Forest classification (predict price direction from sentiment)
-  - Sector/ticker comparison
-
-Run: python src/analysis.py
-"""
-
 import logging
 import numpy as np
 import pandas as pd
@@ -33,26 +20,11 @@ log = logging.getLogger(__name__)
 # ─────────────────────────────────────────────
 
 def compute_correlations(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Computes Pearson and Spearman correlations between each sentiment signal
-    and next-day stock return for every ticker.
-    
-    WHY TWO CORRELATION MEASURES?
-    - Pearson: assumes linear relationship and normally distributed data.
-      Good for measuring how much sentiment and returns move together linearly.
-    - Spearman: rank-based, makes no distribution assumptions.
-      Robust to outliers — better for volatile stocks like GME.
-    
-    WHY NEXT-DAY RETURN?
-    If sentiment today predicts tomorrow's price, it could be used in a trading
-    strategy. We test this key hypothesis here.
-    """
     results = []
     for ticker, grp in df.groupby("ticker"):
         grp = grp.sort_values("date").dropna(
             subset=["weighted_avg_sentiment", "daily_return"])
 
-        # Shift price return by -1 to get NEXT day's return
         next_return = grp["daily_return"].shift(-1)
 
         valid = pd.DataFrame({
@@ -64,11 +36,8 @@ def compute_correlations(df: pd.DataFrame) -> pd.DataFrame:
         if len(valid) < 10:
             continue
 
-        # Pearson correlation
         r_p, p_p = stats.pearsonr(valid["sentiment"], valid["next_return"])
-        # Spearman correlation
         r_s, p_s = stats.spearmanr(valid["sentiment"], valid["next_return"])
-        # Same-day Pearson
         same_valid = grp[["weighted_avg_sentiment", "daily_return"]].dropna()
         r_same, p_same = stats.pearsonr(
             same_valid["weighted_avg_sentiment"], same_valid["daily_return"]
@@ -97,20 +66,6 @@ def compute_correlations(df: pd.DataFrame) -> pd.DataFrame:
 # ─────────────────────────────────────────────
 
 def lead_lag_analysis(df: pd.DataFrame, max_lag: int = 5) -> pd.DataFrame:
-    """
-    Computes correlation between sentiment at time t and stock return at time t+lag
-    for lags 0 through max_lag days.
-    
-    NOVELTY: This reveals WHEN sentiment has the strongest relationship with price.
-    - lag=0: same-day relationship
-    - lag=1: does today's Reddit buzz predict tomorrow's price?
-    - lag=2: two-day leading indicator?
-    
-    A positive correlation at lag=1 but not lag=0 suggests sentiment LEADS price
-    (potentially exploitable for trading).
-    A positive correlation at lag=0 but not lag=1 suggests price DRIVES sentiment
-    (people post more when markets move).
-    """
     results = []
     for ticker, grp in df.groupby("ticker"):
         grp = grp.sort_values("date").reset_index(drop=True)
@@ -138,18 +93,6 @@ def lead_lag_analysis(df: pd.DataFrame, max_lag: int = 5) -> pd.DataFrame:
 # ─────────────────────────────────────────────
 
 def granger_causality_analysis(df: pd.DataFrame, max_lag: int = 3) -> pd.DataFrame:
-    """
-    Performs the Granger Causality test to formally test whether sentiment
-    'Granger-causes' stock returns.
-    
-    WHAT IS GRANGER CAUSALITY?
-    X Granger-causes Y if knowing past values of X improves our forecast of Y
-    compared to using only past values of Y. It is NOT true causality, but it
-    is a rigorous statistical test of predictive power.
-    
-    We first test for stationarity (ADF test) — both time series must be stationary
-    (no trend) for Granger causality to be valid.
-    """
     results = []
     for ticker, grp in df.groupby("ticker"):
         grp = grp.sort_values("date").dropna(
@@ -161,7 +104,6 @@ def granger_causality_analysis(df: pd.DataFrame, max_lag: int = 3) -> pd.DataFra
         sent = grp["weighted_avg_sentiment"].values
         ret  = grp["daily_return"].values
 
-        # Stationarity check (ADF test)
         adf_sent = adfuller(sent, autolag="AIC")
         adf_ret  = adfuller(ret,  autolag="AIC")
         sent_stationary = adf_sent[1] < 0.05   # p-value < 0.05 means stationary
@@ -207,27 +149,9 @@ FEATURE_COLS = [
 ]
 
 def train_direction_classifier(df: pd.DataFrame, ticker: str) -> dict:
-    """
-    Trains and evaluates a Random Forest classifier to predict whether
-    a stock's price will go UP or DOWN the next day, using only sentiment
-    features (no price history used as input — a fair test of sentiment's value).
-    
-    NOVELTY: We use TimeSeriesSplit for cross-validation, which respects the
-    temporal ordering of data (you cannot train on future data to predict the past).
-    Regular k-fold cross-validation would leak future information — TimeSeriesSplit
-    is the correct method for any time-series prediction problem.
-    
-    Models tested:
-      1. Random Forest  : ensemble of decision trees, robust to outliers
-      2. Logistic Regression : linear baseline
-      3. Gradient Boosting : typically best performer on tabular data
-    
-    Returns accuracy scores, feature importances, and confusion matrix.
-    """
     grp = df[df["ticker"] == ticker].sort_values("date").copy()
-    grp["target"] = grp["price_direction"].shift(-1)   # predict NEXT day
+    grp["target"] = grp["price_direction"].shift(-1)
 
-    # Use only rows where we have both sentiment and a valid target
     feat_cols = [c for c in FEATURE_COLS if c in grp.columns]
     model_df  = grp[feat_cols + ["target", "date"]].dropna()
 
@@ -236,7 +160,7 @@ def train_direction_classifier(df: pd.DataFrame, ticker: str) -> dict:
         return {}
 
     X = model_df[feat_cols].values
-    y = (model_df["target"] > 0).astype(int).values   # 1=up, 0=down
+    y = (model_df["target"] > 0).astype(int).values 
 
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
@@ -261,12 +185,10 @@ def train_direction_classifier(df: pd.DataFrame, ticker: str) -> dict:
             "cv_scores":      cv_scores.tolist(),
         }
 
-    # Fit best model on all data for feature importance
     rf = RandomForestClassifier(n_estimators=200, max_depth=5, random_state=42)
     rf.fit(X_scaled, y)
     importances = dict(zip(feat_cols, rf.feature_importances_.round(4)))
 
-    # Full prediction for confusion matrix
     y_pred = rf.predict(X_scaled)
 
     result = {
@@ -302,17 +224,6 @@ def run_ml_analysis(df: pd.DataFrame) -> dict:
 # ─────────────────────────────────────────────
 
 def compute_sentiment_regimes(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Classifies each day into a sentiment regime:
-      Very Bullish / Bullish / Neutral / Bearish / Very Bearish
-    
-    Then computes average stock return in the FOLLOWING day for each regime.
-    This shows which sentiment state has historically been most predictive.
-    
-    NOVELTY: Regime-based analysis reveals non-linear effects that a simple
-    correlation coefficient misses. For example, extreme bearish sentiment
-    might actually precede rebounds (contrarian indicator).
-    """
     df = df.copy()
     df["sentiment_regime"] = pd.cut(
         df["weighted_avg_sentiment"],
@@ -337,7 +248,6 @@ def compute_sentiment_regimes(df: pd.DataFrame) -> pd.DataFrame:
 # ─────────────────────────────────────────────
 
 def run_full_analysis(df: pd.DataFrame) -> dict:
-    """Runs all analyses and returns a dictionary of result DataFrames."""
     log.info("Running full statistical analysis suite...")
     return {
         "correlations":    compute_correlations(df),
@@ -349,7 +259,6 @@ def run_full_analysis(df: pd.DataFrame) -> dict:
 
 
 if __name__ == "__main__":
-    # Quick test with synthetic data
     from etl_processing import generate_full_synthetic_dataset
     df = generate_full_synthetic_dataset()
     results = run_full_analysis(df)

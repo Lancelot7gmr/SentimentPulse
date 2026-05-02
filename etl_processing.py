@@ -1,12 +1,7 @@
 """
-etl_processing.py
-=================
-ETL pipeline:
-  Extract  → read raw Reddit JSON from MongoDB
-  Transform → clean text, score sentiment with VADER, aggregate by day/ticker
-  Load     → write processed tables back to PostgreSQL
-
-Run: python src/etl_processing.py
+In this we read raw Reddit JSON from MongoDB and then
+transform it into clean text, score sentiment with VADER, aggregate by day/ticker
+Afterwards load to write processed tables back to PostgreSQL
 """
 
 import os
@@ -25,7 +20,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────
-# CONNECTIONS (reuse from data_collection)
+# CONNECTIONS
 # ─────────────────────────────────────────────
 
 def get_mongo_col():
@@ -45,23 +40,21 @@ def get_pg_engine():
 # ─────────────────────────────────────────────
 # TEXT CLEANING
 # ─────────────────────────────────────────────
-
-# Regex patterns compiled once for efficiency
 _URL_RE    = re.compile(r"http\S+|www\.\S+")
-_TICKER_RE = re.compile(r"\$[A-Z]{1,5}")       # e.g. $TSLA
+_TICKER_RE = re.compile(r"\$[A-Z]{1,5}")       
 _SPECIAL_RE = re.compile(r"[^a-zA-Z0-9\s!?.,']")
 _SPACE_RE   = re.compile(r"\s+")
 _EMOJI_RE   = re.compile(
-    "[\U0001F600-\U0001F64F"   # emoticons
-    "\U0001F300-\U0001F5FF"    # symbols & pictographs
-    "\U0001F680-\U0001F6FF"    # transport & map (was wrong: 1FF < 680)
-    "\U0001F1E0-\U0001F1FF"    # flags
-    "\U00002700-\U000027BF"    # dingbats
+    "[\U0001F600-\U0001F64F"   
+    "\U0001F300-\U0001F5FF"    
+    "\U0001F680-\U0001F6FF"    
+    "\U0001F1E0-\U0001F1FF"    
+    "\U00002700-\U000027BF"    
     "]+",
     flags=re.UNICODE
 )
 
-# Financial slang mapping — expand VADER's vocabulary
+# Financial slang mapping
 FINANCIAL_SLANG = {
     "moon":    "excellent profit",
     "mooning": "rapidly increasing",
@@ -89,13 +82,10 @@ FINANCIAL_SLANG = {
 def clean_text(text: str) -> str:
     """
     Cleans a Reddit post title/body for sentiment analysis.
-    Steps:
-      1. Lowercase
-      2. Translate financial slang to plain English
-      3. Remove URLs (not relevant to sentiment)
-      4. Remove emojis (VADER doesn't handle them well)
-      5. Keep punctuation that carries sentiment (!?, ...)
-      6. Collapse whitespace
+    The major steps involved are namely; make everything in lowercase,
+    translate financial slang to plain English, remove URLs which are not relevant
+    to sentiment, remove emojis  as VADER doesn't handle them well,
+    keep punctuation that carries sentiment such as !?,. etc and finally collapse whitespace
     """
     if not text or not isinstance(text, str):
         return ""
@@ -116,13 +106,9 @@ def clean_text(text: str) -> str:
 def extract_reddit_from_mongo(ticker: str = None) -> pd.DataFrame:
     """
     Reads raw Reddit post documents from MongoDB.
-    
-    WHY ETL from MongoDB to PostgreSQL?
-    MongoDB stores the raw, messy, semi-structured JSON as-is (the Extract step).
-    Once we have cleaned and scored the text, we produce a structured, uniform table
-    (one row per post with a sentiment score) — this is the Transform step.
+    MongoDB stores the raw, messy, semi-structured JSON as it is.
+    Once we have cleaned and scored the text, we produce a structured, uniform table.
     The structured output is then Loaded into PostgreSQL for joining with stock prices.
-    
     This Extract-Transform-Load pattern is fundamental to data engineering.
     """
     col, client = get_mongo_col()
@@ -167,19 +153,14 @@ vader = SentimentIntensityAnalyzer()
 
 def score_sentiment_vader(text: str) -> dict:
     """
-    Scores text using VADER (Valence Aware Dictionary and sEntiment Reasoner).
-    
-    WHY VADER over a fine-tuned model?
+    Scores text using VADER (Valence Aware Dictionary and Sentiment Reasoner).
     VADER is specifically designed for social media text. It understands:
-      - Capitalisation (GREAT vs great)
-      - Punctuation emphasis (great!!! vs great)
-      - Negation (not bad)
-    It runs in microseconds per document — perfect for large Reddit datasets.
+    Capitalisation, punctuation emphasis and negation
+    It runs in microseconds per document which is a perfect fit for large
+    Reddit datasets.
     
-    Returns:
-      compound  : overall score from -1 (very negative) to +1 (very positive)
-      pos/neg/neu: proportion of text in each valence
-      sentiment_label: Positive / Negative / Neutral
+    It then returns overall score from -1 to +1 and find the proportion of
+    text in each valence which is then labelled as Positive / Negative / Neutral
     """
     scores = vader.polarity_scores(text)
     compound = scores["compound"]
@@ -201,8 +182,11 @@ def compute_engagement_weight(row: pd.Series) -> float:
     sentiment by how much the community engaged with it. A post with 10,000
     upvotes should count more than a post with 2 upvotes.
     
-    Weight formula: log(1 + upvotes) * upvote_ratio * log(1 + comments)
-    Logarithm is used to dampen extreme outliers (viral posts) without ignoring them.
+    Weight formula used for this is as follows:
+        log(1 + upvotes) * upvote_ratio * log(1 + comments)
+        
+    Logarithm is used to dampen extreme outliers in this case viral posts
+    without ignoring them.
     """
     upvotes  = max(0, row.get("score", 0) or 0)
     comments = max(0, row.get("num_comments", 0) or 0)
@@ -212,12 +196,10 @@ def compute_engagement_weight(row: pd.Series) -> float:
 
 def transform_reddit_sentiment(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Full transformation pipeline on Reddit posts:
-      1. Combine title + body into one text field
-      2. Clean the text
-      3. Score sentiment with VADER
-      4. Compute engagement weight
-      5. Return one row per post with all features
+    Full transformation pipeline on Reddit posts is done by c
+    ombining  title with body into one text field and then cleaning the text.
+    Sentiment   is nthen scored with VADER. the engagement weight is then computed
+    and one row is returned per post with all the features.
     """
     if df.empty:
         return df
@@ -256,20 +238,18 @@ def transform_reddit_sentiment(df: pd.DataFrame) -> pd.DataFrame:
 
 def aggregate_daily_sentiment(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Aggregates individual post-level sentiment into a single daily sentiment score
-    per ticker per day.
+    this function is used to aggregate individual post-level sentiment into a
+    single daily sentiment score per ticker per day.
     
     NOVELTY: We produce TWO sentiment signals:
       1. raw_avg_sentiment   : simple mean of all compound scores for the day
-      2. weighted_avg_sentiment: weighted mean where viral posts count more
-         (using engagement_weight as the weight)
+      2. weighted_avg_sentiment: weighted mean where viral posts count more using
+                                 engagement_weight as the weight
     
-    We also compute:
-      - sentiment_volume: how many posts were made that day (proxy for 'buzz')
-      - sentiment_std: standard deviation of sentiment (disagreement/controversy)
-      - bullish_ratio: fraction of posts that were positive
-    
-    These additional features enable richer analysis than a simple mean.
+    We also compute How many posts were made that day?, Standard deviation of
+    sentiment either a disagreement or controversy and a fraction of posts that
+    were positive. These additional features enable richer analysis
+    than a simple mean.
     """
     df["date"] = pd.to_datetime(df["date"])
 
@@ -308,7 +288,6 @@ def aggregate_daily_sentiment(df: pd.DataFrame) -> pd.DataFrame:
 # ─────────────────────────────────────────────
 
 def load_to_postgres(df: pd.DataFrame, table: str, engine):
-    """Writes a DataFrame to a PostgreSQL table, replacing existing data."""
     df.to_sql(table, engine, if_exists="replace",
               index=False, method="multi", chunksize=500)
     log.info("Loaded %d rows into PostgreSQL table '%s'", len(df), table)
@@ -320,12 +299,9 @@ def load_to_postgres(df: pd.DataFrame, table: str, engine):
 
 def build_master_dataset(engine) -> pd.DataFrame:
     """
-    Creates the master analysis table by JOIN-ing:
-      - reddit_sentiment_daily (from ETL above)
-      - stock_prices (from data_collection.py)
-      - news_sentiment (from data_collection.py)
-    
-    All joined on (ticker, date).
+    Creates the master analysis table by joining reddit_sentiment_daily,
+    stock_prices and finally news_sentiment which are all joined on
+    (ticker, date).
     
     This master table is the foundation for all visualisations and analysis.
     It is stored as 'master_dataset' in PostgreSQL.
@@ -381,16 +357,14 @@ def build_master_dataset(engine) -> pd.DataFrame:
 def generate_full_synthetic_dataset(tickers=None, start="2023-01-01",
                                     end="2024-12-31") -> pd.DataFrame:
     """
-    Generates a complete, realistic synthetic master dataset for demonstration.
-    
-    This allows the Streamlit dashboard to work without real database connections.
-    The synthetic data simulates:
-      - Realistic stock price movements (geometric Brownian motion)
-      - Correlated sentiment scores (sentiment partially drives prices with lag)
-      - News sentiment following a similar but independent pattern
-      - Company-specific characteristics (Tesla more volatile, Apple more stable)
-    
-    Clearly labelled as synthetic in the dashboard.
+    This function generates a complete, realistic synthetic master dataset
+    for demonstration.
+    This allows the Streamlit dashboard to work without real database connections if not available.
+    The synthetic data then simulates realistic stock price movements
+    (geometric Brownian motion), correlated sentiment scores (sentiment
+    partially drives prices with lag), news sentiment following a similar but
+    independent pattern company-specific characteristics which an be seen as
+    Tesla being more volatile while Apple being more stable etc.
     """
     if tickers is None:
         tickers = ["TSLA", "AAPL", "GME", "NVDA", "AMZN"]
@@ -485,10 +459,6 @@ def generate_full_synthetic_dataset(tickers=None, start="2023-01-01",
 # ─────────────────────────────────────────────
 
 def run_etl():
-    """
-    Runs the full ETL pipeline:
-    Extract from MongoDB → Transform with VADER → Load to PostgreSQL → Build master table
-    """
     engine = get_pg_engine()
 
     all_dfs = []

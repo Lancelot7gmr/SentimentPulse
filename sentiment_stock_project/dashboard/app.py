@@ -1,21 +1,3 @@
-"""
-dashboard/app.py  —  Main Streamlit entry point.
-
-HOW STREAMLIT WORKS (plain English):
-  Streamlit converts this Python script into a web app.
-  Every time the user clicks a button or moves a slider, Streamlit
-  re-runs the ENTIRE script from top to bottom.
-  - st.session_state  : dictionary that survives reruns (like a global store)
-  - @st.cache_data    : caches expensive functions so they only run once
-  - st.sidebar        : left-hand panel
-  - st.columns([2,1]) : splits the page into columns with relative widths
-
-HOW TO RUN:
-  cd sentiment_stock_project
-  streamlit run dashboard/app.py
-  Then open http://localhost:8501 in your browser.
-"""
-
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -32,14 +14,11 @@ from src.analysis import (compute_correlations, lead_lag_analysis,
                            granger_causality_analysis, run_ml_analysis,
                            compute_sentiment_regimes, train_direction_classifier)
 
-# ── Colour helper ─────────────────────────────────────────────────────────────
 def hex_to_rgba(hex_color: str, alpha: float = 0.15) -> str:
-    """Convert '#rrggbb' to 'rgba(r,g,b,alpha)' for Plotly fillcolor."""
     h = hex_color.lstrip("#")
     r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
     return f"rgba({r},{g},{b},{alpha})"
 
-# ── Must be first Streamlit call ──────────────────────────────────────────────
 st.set_page_config(
     page_title="SentimentPulse",
     page_icon="📡",
@@ -47,7 +26,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Global CSS ────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Mono:wght@400;500&family=Outfit:wght@300;400;500&display=swap');
@@ -75,7 +53,6 @@ section[data-testid="stSidebar"] span { color: #94a3b8 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Constants ─────────────────────────────────────────────────────────────────
 TICKER_COLORS = {"TSLA":"#e74c3c","AAPL":"#3b82f6","GME":"#f59e0b",
                  "NVDA":"#00d9a3","AMZN":"#a855f7"}
 
@@ -90,14 +67,10 @@ CHART_BG = dict(
     legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color="#94a3b8", size=11)),
     hovermode="x unified",
 )
-# Default margin applied separately — keeping it out of CHART_BG prevents
-# "multiple values for margin" when a chart needs a custom margin.
+
 _DEF_MARGIN = dict(l=10, r=10, t=40, b=10)
-# Axis style applied separately via update_xaxes/update_yaxes.
-# Keeping axes OUT of CHART_BG prevents "multiple values for yaxis" errors
-# when update_layout(**CHART_BG, yaxis=..., margin=_DEF_MARGIN) is called.
 _AXIS_STYLE = dict(gridcolor="rgba(255,255,255,0.03)", linecolor="rgba(255,255,255,0.08)")
-_YAXIS_STYLE = _AXIS_STYLE  # backwards-compat alias
+_YAXIS_STYLE = _AXIS_STYLE
 
 def _apply_axes(fig):
     fig.update_xaxes(**_AXIS_STYLE)
@@ -320,7 +293,7 @@ if "Overview" in page:
         fig_sc.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.15)")
         st.plotly_chart(fig_sc, use_container_width=True)
 
-    # Research question callout
+    # Research question
     st.markdown("""
     <div class='card' style='margin-top:0.5rem; border-left:3px solid #4da6ff;'>
       <div style='font-family:DM Mono,monospace;font-size:0.68rem;color:#4da6ff;letter-spacing:.12em;text-transform:uppercase;margin-bottom:.4rem;'>Research Question</div>
@@ -355,7 +328,7 @@ elif "Sentiment vs Price" in page:
     )
     color = TICKER_COLORS.get(sel_ticker, "#00d9a3")
 
-    # ── Row 1: Price with Bollinger Bands ──
+    # Price with Bollinger Bands
     close  = tdf["close"]
     ma20   = close.rolling(20, min_periods=1).mean()
     std20  = close.rolling(20, min_periods=1).std().fillna(0)
@@ -378,7 +351,7 @@ elif "Sentiment vs Price" in page:
         line=dict(color="#fbbf24", width=1.2, dash="dot"),
         showlegend=True), row=1, col=1)
 
-    # ── Row 2: Multi-signal sentiment ──
+    # Multi-signal sentiment
     if "raw_avg_sentiment" in tdf.columns:
         fig.add_trace(go.Scatter(
             x=tdf["date"], y=tdf["raw_avg_sentiment"], name="Raw sentiment",
@@ -396,7 +369,7 @@ elif "Sentiment vs Price" in page:
     fig.add_hline(y=0, row=2, col=1, line_dash="dash",
                   line_color="rgba(255,255,255,0.15)", line_width=1)
 
-    # ── Row 3: Return bars + post volume line ──
+    # Return bars + post volume line 
     ret_colors = ["#00d9a3" if r >= 0 else "#ff4d6d"
                   for r in tdf["daily_return"].fillna(0)]
     fig.add_trace(go.Bar(
@@ -834,7 +807,7 @@ elif "Deep Dive" in page:
     st.plotly_chart(fig_bull, use_container_width=True)
 
     # Raw data table
-    with st.expander("📋 View raw data for this ticker"):
+    with st.expander("View raw data for this ticker"):
         st.dataframe(
             tdf.sort_values("date", ascending=False).head(100),
             use_container_width=True
